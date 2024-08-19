@@ -1,7 +1,7 @@
 `destructor`: A helper macro for coding `=destroy` hooks
 ========================================================
 
-The `destructor` generates the definition for the `=destroy` hook for an object or
+The `destructor` macro generates the definition for the `=destroy` hook for an object or
 ref object type. The intent is to eliminate most of the boilerplate code
 involved in writing an `=destroy` hook. There is also an option to
 automatically generate printing of trace messages for debug purposes, if desired.

@@ -275,7 +275,8 @@ proc destructorJsonStart(typeNode: NimNode, tagfield: NimNode): NimNode =
   if tagfield.kind != nnkEmpty:
     # Add echo argument for tagfield
     result.add(tagfield)
-  result.add(newStrLitNode("\'\": {"))
+    result.add(newStrLitNode("\'"))
+  result.add(newStrLitNode("\": {"))
 
 proc genObjectDestroyProcParameterType(typeNameStr: string): NimNode =
   ## Generates the type portion of the `=destroy` proc's only argument
@@ -529,7 +530,7 @@ macro destructor*(destructeeType: typedesc, codeSpecs: varargs[untyped]): untype
   ## Compiling the above code with option "-d:traceDestructors" and executing it
   ## gives the following output:
   ## ```
-  ##  "Destructor for type TestObj'": {
+  ##  "Destructor for type TestObj": {
   ##  "destroy field simpleObj of type SimpleObj": {
   ##  "Destructor for type SimpleObj with name = 'ph name'": {
   ##  "destroy field name of type string": {
@@ -542,7 +543,7 @@ macro destructor*(destructeeType: typedesc, codeSpecs: varargs[untyped]): untype
   ## ```
   ## Pasting the output into a JSON formatter gives:
   ## ```
-  ##  "Destructor for type TestObj'": {
+  ##  "Destructor for type TestObj": {
   ##    "destroy field simpleObj of type SimpleObj": {
   ##      "Destructor for type SimpleObj with name = 'ph name'": {
   ##        "destroy field name of type string": {},

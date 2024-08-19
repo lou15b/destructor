@@ -457,106 +457,12 @@ macro destructor*(destructeeType: typedesc, codeSpecs: varargs[untyped]): untype
   ## "ref object of"), then an `=destroy` call for the base type is
   ## generated at the end.
   ## 
-  ## A few simple examples. They are based on the following object type definition:
-  ## ```
-  ##   type
-  ##     SimpleObj = object
-  ##      name: string
-  ##      otherString: string
-  ## ```
-  ## 
-  ## First, the simplest possible destructor definition:
-  ## ```
-  ##  destructor(SimpleObj):
-  ##    destroyFields(x.name, x.otherString)
-  ## ```
-  ## Note the use of "x" (the default) to represent the entity being destroyed.
-  ## 
-  ## Second, let's assume that the field "name" is used to identify the instance of the
-  ## SimpleObj object.
-  ## ```
-  ##  destructor(SimpleObj, tagfield = x.name):
-  ##    destroyFields(x.name, x.otherString)
-  ## ```
-  ## 
-  ## Third, let's suppose we want to use "xyz" instead of "x" to represent the
-  ## entity being destroyed.
-  ## ```
-  ##  destructor(SimpleObj, identifier = xyz, tagfield = xyz.name):
-  ##    destroyFields(xyz.name, xyz.otherString)
-  ## ```
-  ## 
-  ## Finally, let's put some custom user code into the destructor.
-  ## ```
-  ##  destructor(SimpleObj, identifier = xyz, tagfield = xyz.name):
-  ##    if xyz.otherString == "Call":
-  ##      # If otherString is "Call" then use the Call convention to invoke destroyFields
-  ##      destroyFields(xyz.name, xyz.otherString)
-  ##    else:
-  ##      # Otherwise use the Command convention to invoke destroyFields
-  ##      destroyFields xyz.name, xyz.otherString
-  ## ```
-  ## 
   ## Destructor trace messages
   ## If the compile option "-d:traceDestructors" is specified, then the destructor
   ## macro will generate JSON-like trace messages at the beginning (and end) of the
   ## `=destroy` body, before (and after) the `=destroy` call each for each field,
   ## and before (and after) the `=destroy` call for the base type. (The end/after
   ## trace message is merely a JSON element terminator "}".)
-  ## 
-  ## For example, consider the following code:
-  ## ```
-  ## type
-  ##   SimpleObj = object
-  ##     name: string
-  ##     otherString: string
-  ##
-  ##   TestObj = object of RootObj
-  ##     simpleObj: SimpleObj
-  ##
-  ## destructor(SimpleObj, identifier = xyz, tagfield = xyz.name):
-  ##   destroyFields(xyz.name, xyz.otherString)
-  ##
-  ## destructor(TestObj):
-  ##   destroyFields(x.simpleObj)
-  ##
-  ## when isMainModule:
-  ##   proc testCase() =
-  ##     let t1 {.used.} = TestObj(simpleObj: SimpleObj(name: "ph name", otherString: "xfghxfg"))
-  ##
-  ##   testCase()
-  ## ```
-  ## 
-  ## Compiling the above code with option "-d:traceDestructors" and executing it
-  ## gives the following output:
-  ## ```
-  ##  "Destructor for type TestObj": {
-  ##  "destroy field simpleObj of type SimpleObj": {
-  ##  "Destructor for type SimpleObj with name = 'ph name'": {
-  ##  "destroy field name of type string": {
-  ##  },
-  ##  "destroy field otherString of type string": {
-  ##  },
-  ##  },
-  ##  },
-  ##  },
-  ## ```
-  ## Pasting the output into a JSON formatter gives:
-  ## ```
-  ##  "Destructor for type TestObj": {
-  ##    "destroy field simpleObj of type SimpleObj": {
-  ##      "Destructor for type SimpleObj with name = 'ph name'": {
-  ##        "destroy field name of type string": {},
-  ##        "destroy field otherString of type string": {},
-  ##      },
-  ##    },
-  ##  },
-  ## ```
-  ## Notice the following:
-  ## - Nested indentation showing that destroying field "simpleObj" caused
-  ##   the destructor for type "SimpleObj" to be invoked.
-  ## - The identification of the SimpleObj instance being destroyed was
-  ##   that whose tag field "name" had the value "ph name"
   ## 
 
   let destructeeTypeImpl = destructeeType.getImpl

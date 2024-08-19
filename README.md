@@ -1,4 +1,4 @@
-A helper macro for coding destructors (`=destroy` procs)
+A helper macro for coding destructors (`\`=destroy\`` procs)
 
 Macro to generate the definition for the `\`=destroy\`` hook for an object or
 ref object type.
@@ -31,6 +31,8 @@ If the destructee type is a subclass of a base type (i.e. "object of" or
 "ref object of"), then an `=destroy` call for the base type is
 generated at the end. (Note that this is not done if the base type is
 `RootObj' or `RootRef`.)
+
+Coding examples
 
 A few simple examples. They are based on the following object type definition:
 ```
@@ -73,11 +75,13 @@ Finally, let's put some custom user code into the destructor.
 ```
 
 Destructor trace messages
+
 If the compile option "-d:traceDestructors" is specified, then the destructor
 macro will generate JSON-like trace messages at the beginning (and end) of the
 `=destroy` body, before (and after) the `=destroy` call each for each field,
-and before (and after) the `=destroy` call for the base type. (The end/after
-trace message is merely a JSON element terminator "}".)
+and before (and after) the `=destroy` call for the base type. (The
+trace message printed after each call and at the end of the destructor is
+merely a JSON element terminator "}".)
 
 For example, consider the following code:
 ```

@@ -1,10 +1,10 @@
-A helper macro for coding destructors (`=destroy` procs)
+`destructor`: A helper macro for coding `=destroy` hooks
 ========================================================
 
-Macro to generate the definition for the `=destroy` hook for an object or
+The `destructor` generates the definition for the `=destroy` hook for an object or
 ref object type. The intent is to eliminate most of the boilerplate code
 involved in writing an `=destroy` hook. There is also an option to
-automatically generate printing of trace messages for debug purposes if desired.
+automatically generate printing of trace messages for debug purposes, if desired.
 
 The general form used to invoke the destructor macro looks like:
 ```
@@ -62,11 +62,12 @@ First, the simplest possible destructor definition:
  destructor(SimpleObj):
    destroyFields(x.name, x.otherString)
 ```
-Note the use of "x" (the default) to represent the entity being destroyed. Note
+Note the use of `x` (the default) to represent the entity being destroyed. Note
 also that a single statement can be used for all of the object's fields.
 
-Second, let's assume that the field "name" is used to identify the instance of the
-SimpleObj object. This option only affects destructor trace messages.
+Second, let's assume that the field `name` is used to identify the instance of the
+`SimpleObj` object. Note that this option only affects destructor trace messages
+(see `Destructor trace messages` below).
 ```
  destructor(SimpleObj, tagfield = x.name):
    destroyFields(x.name, x.otherString)
@@ -93,7 +94,7 @@ Finally, let's put some custom user code into the destructor.
 Destructor trace messages
 -------------------------
 
-If the compile option "-d:traceDestructors" is specified, then the destructor
+If the compile option `-d:traceDestructors` is specified, then the `destructor`
 macro will generate statements to print JSON-like trace messages at:
 - the beginning (and end) of the `=destroy` body,
 - before (and after) the `=destroy` call each for each field, and

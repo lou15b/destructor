@@ -192,23 +192,18 @@ proc buildDestroyFieldCodeStmts(fieldNode: NimNode, destructeeTypeImpl: NimNode)
 
   # echo "\n*** Generated code from buildDestroyFieldCodeStmts:\n", repr(result), "\n\n"
 
-proc expandDestroyFieldsCall(destroyFieldsCall: NimNode, bodyCode: var NimNode,
-    destructeeTypeImpl: NimNode) =
-  ## Expands each of the arguments in a "destroyFields(...)" statement into
-  ## an `=destroy` call for that argument, plus any trace messages if required,
-  ## and adds the generated code to the specified code AST
-  ##    destroyFieldsCall = AST for the "destroyFields(x-field1, x.field2..)" statement
-  ##    bodyCode = AST to which the generated code is to be added
-  ##    destructeeTypeImpl = (typed) AST of the destructee's type definition
-  for argNode in destroyFieldsCall[1 .. ^1]:
-    bodyCode.add(buildDestroyFieldCodeStmts(argNode, destructeeTypeImpl))
+macro destroyFields*(destructeeType: typedesc, fields: varargs[untyped]): untyped =
+  result = newStmtList()
+  let destructeeTypeImpl = destructeeType.getImpl
+  for field in fields:
+    result.add(buildDestroyFieldCodeStmts(field, destructeeTypeImpl))
 
 # ===============================================================================
 # Procs to generate the `=destroy` proc declaration and associated trace messages
 # ===============================================================================
 
 proc parseCodeSpecs(codeSpecs: NimNode, identifier: var NimNode,
-    tagfield: var NimNode, rawBodyCode: var NimNode) =
+    tagfield: var NimNode, bodyCode: var NimNode) =
   ## Parses the destructor macro's untyped arguments to obtain the code generation
   ## options and the (unexpanded) body code in the macro's invocation.
   ##    codeSpecs = the list of the macro's untyped arguments
@@ -220,8 +215,9 @@ proc parseCodeSpecs(codeSpecs: NimNode, identifier: var NimNode,
   ##               in the destructor's trace message to identify the particular
   ##               destructee instance being destroyed
   ##               Default is no tag field.
-  ##    rawBodyCode = the variable to receive the AST of the raw body code in the
-  ##                  macro's invocation
+  ##    bodyCode = the variable to receive the AST of the body code in the
+  ##               destructor macro's invocation. The body code will most likely
+  ##               include at least one invocation of the "destroyFields" macro.
   
   # echo "\n##### parseCodeSpecs - AST of codeSpecs:\n", treeRepr(codeSpecs), "\n"
   # echo "Number of codeSpec params is ", codeSpecs.len
@@ -257,12 +253,12 @@ proc parseCodeSpecs(codeSpecs: NimNode, identifier: var NimNode,
       error("Invalid destructor option " & $option)
 
   # The raw body code is the last argument
-  rawBodyCode = codeSpecs[^1]
+  bodyCode = codeSpecs[^1]
 
   # echo "\n##### parseCodeSpecs - results:"
   # echo "\t identifier = ", repr(identifier)
   # echo "\t tagfield = ", repr(tagfield)
-  # echo "\t rawBodyCode AST:\n", treeRepr(rawBodyCode)
+  # echo "\t bodyCode AST:\n", treeRepr(bodyCode)
 
 proc destructorJsonStart(typeNode: NimNode, tagfield: NimNode): NimNode =
   ## Generates code to print the JSON element start that records the entry
@@ -309,44 +305,8 @@ proc genDestroyProcParameterType(destructeeType: NimNode,
     error "destructor macro only supports object and ref object types " &
       "(genDestroyProcParameterType)"
 
-proc addProcessedRawBodyCodeSubtree(processedTree: var NimNode, subtree: NimNode,
-    destructeeTypeImpl: NimNode) =
-  ## Recursive proc to process a subtree of the raw body code. It expands each
-  ## "destroyFields(...)" call in place, leaving the surrounding code intact.
-  ##    processedTree = variable containing the AST that has been processed so far.
-  ##                    The processed code from this proc is added to processedTree.
-  ##    subtree = the AST subtree to process
-  ##    destructeeTypeImpl = (typed) AST of the destructee's type definition
-  if (subtree.kind == nnkCall or subtree.kind == nnkCommand) and
-      $subtree[0] == "destroyFields":
-    # The current subtree is a single stmt - a call to "destroyFields"
-    # Expand the statemnt and add the result to the processed tree
-    expandDestroyFieldsCall(subtree, processedTree, destructeeTypeImpl)
-  elif subtree.len > 0:
-    # The current subtree is itself an AST tree
-    # Process each of its children in a recursive call
-    var rTree = subtree.kind.newTree()
-    for childTree in subtree:
-      rTree.addProcessedRawBodyCodeSubtree(childTree, destructeeTypeImpl)
-    processedTree.add(rTree)
-  else:
-    # The current subtree has no children - just add it to the processed tree
-    processedTree.add(subtree)
-
-proc processRawBodyCode(rawBodyCode: NimNode, destructeeTypeImpl: NimNode): NimNode =
-  ## Processes the raw body code from the macro invocation to yield the body
-  ## code of the final `=destroy` proc definition.
-  ## Each "destroyFields(...)" statement is expanded into `=destroy` calls for the
-  ## specified fields. Expansion is done in place, leaving the surrounding code intact.
-  ##    rawBodyCode = the AST of the body code from the macro's invocation
-  ##    destructeeTypeImpl = (typed) AST of the destructee's type definition
-  result = newStmtList()
-  for node in rawBodyCode:
-    # Each top-level AST subtree is processed in turn
-    result.addProcessedRawBodyCodeSubtree(node, destructeeTypeImpl)
-
 proc generateDestructorCode(destructeeType: NimNode, destructeeTypeImpl: NimNode,
-    destructeeIdentifier: NimNode, tagField: NimNode, rawBodyCode: NimNode): NimNode =
+    destructeeIdentifier: NimNode, tagField: NimNode, bodyCode: NimNode): NimNode =
   ## Generates the complete `=destroy` proc definition for the destructor macro
   ##    destructeeType = typedesc of the destructee's type
   ##    destructeeTypeImpl = (typed) AST of the destructee's type definition
@@ -355,7 +315,9 @@ proc generateDestructorCode(destructeeType: NimNode, destructeeTypeImpl: NimNode
   ##               The tag field is the destructee's field whose value is used
   ##               in the destructor's trace message to identify the particular
   ##               destructee instance being destroyed
-  ##    rawBodyCode = the AST of the raw body code in the macro's invocation
+  ##    bodyCode = the AST of the raw body code in the destructor macro's invocation
+  ##               The body code will most likely include at least one
+  ##               invocation of the "destroyFields" macro.
   
   # echo "\n##### generateDestructorCode"
   # echo "##### Impl of ", $destructeeType, " is:\n", treeRepr(destructeeTypeImpl)
@@ -396,8 +358,8 @@ proc generateDestructorCode(destructeeType: NimNode, destructeeTypeImpl: NimNode
     let entryStmt = destructorJsonStart(destructeeType, tagField)
     bodyNode.add(entryStmt)
   
-  # Add the processed body code
-  bodyNode.add(processRawBodyCode(rawBodyCode, destructeeTypeImpl))
+  # Add the body code
+  bodyNode.add(bodyCode)
 
   # Append destructor call for base type if necessary
   var objectDef = destructeeTypeImpl[2]
@@ -475,15 +437,15 @@ macro destructor*(destructeeType: typedesc, codeSpecs: varargs[untyped]): untype
   
   var identifier: NimNode
   var tagfield: NimNode
-  var rawBodyCode: NimNode
+  var bodyCode: NimNode
   # Parse the untyped arguments
-  parseCodeSpecs(codeSpecs, identifier, tagfield, rawBodyCode)
+  parseCodeSpecs(codeSpecs, identifier, tagfield, bodyCode)
 
-  # assert rawBodyCode.kind == nnkStmtList
+  # assert bodyCode.kind == nnkStmtList
 
   # Generate the code
   result = generateDestructorCode(destructeeType, destructeeTypeImpl, identifier,
-    tagfield, rawBodyCode)
+    tagfield, bodyCode)
   
   # echo "\n### Destructor generated code equivalent:\n", repr(result), "\n\n"
   # echo "\n### Destructor generated AST:\n", treeRepr(result), "\n\n"
@@ -512,9 +474,9 @@ when isMainModule:
 
   destructor(SimpleObj, identifier = xyz, tagfield = xyz.name):
     if xyz.otherString == "Call":
-      destroyFields(xyz.name, xyz.otherString)
+      destroyFields(SimpleObj, xyz.name, xyz.otherString)
     else:
-      destroyFields xyz.name, xyz.otherString
+      destroyFields SimpleObj, xyz.name, xyz.otherString
     discard
 
   proc testCase1() =
@@ -530,7 +492,7 @@ when isMainModule:
       simpleObj: SimpleObj
 
   destructor(TestObj):
-    destroyFields(x.simpleObj)
+    destroyFields(TestObj, x.simpleObj)
 
   proc testCase2() =
     echo "\n\nTest Case 2"
@@ -546,7 +508,7 @@ when isMainModule:
       simpleObjTuple: tuple[str: string, simpleObj: SimpleObj]
 
   destructor(TestObj2):
-    destroyFields(x.simpleObjTuple)
+    destroyFields(TestObj2, x.simpleObjTuple)
 
   proc testCase3() =
     echo "\n\nTest Case 3"
@@ -564,7 +526,7 @@ when isMainModule:
       ph: SimpleObj
 
   destructor(TestSubObj, tagfield = x.objname):
-    destroyFields(x.ph, x.objname)
+    destroyFields(TestSubObj, x.ph, x.objname)
 
   proc testCase4() =
     echo "\n\nTest Case 4"
@@ -582,7 +544,7 @@ when isMainModule:
       simpleObjSeq: seq[SimpleObj]
 
   destructor(TestRef, tagfield = x.name):
-    destroyFields(x.singleSimpleObj, x.simpleObjSeq, x.name)
+    destroyFields(TestRef, x.singleSimpleObj, x.simpleObjSeq, x.name)
 
   proc testCase5() =
     echo "\n\nTest Case 5"
@@ -603,7 +565,7 @@ when isMainModule:
       simpleObjArray: array[3, SimpleObj]
 
   destructor(TestRef2, tagfield = x.name):
-    destroyFields(x.simpleObjArray, x.name)
+    destroyFields(TestRef2, x.simpleObjArray, x.name)
 
   proc testCase6() =
     echo "\n\nTest Case 6"
@@ -626,10 +588,10 @@ when isMainModule:
       mMarkers: seq[Marker]
 
   destructor(Marker, tagfield = x.name):
-    destroyFields(x.name, x.tref)
+    destroyFields(Marker, x.name, x.tref)
 
   destructor(CompositeTestRef):
-    destroyFields(x.mMarkers)
+    destroyFields(CompositeTestRef, x.mMarkers)
 
   proc testCase7() =
     echo "\n\nTest Case 7"
@@ -669,7 +631,7 @@ when isMainModule:
       trefs: seq[TestRef]
 
   destructor(MetaTestRef):
-    destroyFields(x.trefs)
+    destroyFields(MetaTestRef, x.trefs)
 
   proc testCase8() =
     echo "\n\nTest Case 8"
@@ -728,12 +690,12 @@ when isMainModule:
       tableField: Table[string, SimpleTestRef]
 
   destructor(SimpleTestRef, tagfield = x.name):
-    destroyFields(x.name)
+    destroyFields(SimpleTestRef, x.name)
 
   destructor(TableTestRef):
     # See testCase9() below.
     # This destructor illustrates:
-   destroyFields(x.tableField)
+   destroyFields(TableTestRef, x.tableField)
 
   proc testCase9() =
     echo "\n\nTest Case 9"
@@ -760,7 +722,7 @@ when isMainModule:
       refTableField: TableRef[string, SimpleTestRef]
 
   destructor(RefTableTestRef):
-    destroyFields(x.refTableField)
+    destroyFields(RefTableTestRef, x.refTableField)
 
   proc testCase10() =
     echo "\n\nTest Case 10"
@@ -788,7 +750,7 @@ when isMainModule:
       closureField: proc()
 
   destructor(ClosureTestRef):
-    destroyFields(x.closureField)
+    destroyFields(ClosureTestRef, x.closureField)
 
   proc getTestClosureProc(): proc() =
     let str1 = SimpleTestRef.new()

@@ -99,6 +99,17 @@ proc getTypeString(typeNode: NimNode): string =
   else:
     result = repr(typeNode)
 
+proc getFieldIdent(fieldNode: NimNode): NimNode =
+  assert fieldNode.kind == nnkIdentDefs
+  if fieldNode[0].kind == nnkIdent:
+    # Private field (no post-fix "*")
+    result = fieldNode[0]
+  elif fieldNode[0].kind == nnkPostfix:
+    # Field is marked public ("*")
+    result = fieldNode[0][1]
+  else:
+    error "Unrecognized field declaration (getFieldIdent): " & repr(fieldNode)
+
 proc getFieldTypeString(fieldIdent: NimNode, ownerFieldList: NimNode): string =
   ## Returns the string representation of an object field's type
   ##    fieldIdent = the ident node of the field
@@ -106,7 +117,7 @@ proc getFieldTypeString(fieldIdent: NimNode, ownerFieldList: NimNode): string =
   let fieldName = $fieldIdent
   var index = 0
   for field in ownerFieldList:
-    let ident = field[0]
+    let ident = getFieldIdent(field)
     inc index
     if $ident == fieldName:
       result = getTypeString(field[1])
@@ -461,6 +472,7 @@ when isMainModule:
   # Use Case 1:
   #   - A simple object type where one of the fields (name) identifies the
   #     object instance - i.e. "name" is the tag field
+  #   - Both fields are public
   #   - Use of an alternate identifier in the destructor for the entity being
   #     destroyed (xyz instead of the default, x)
   #   - Specification of the tag field
@@ -469,8 +481,8 @@ when isMainModule:
   # ---------------------------
   type
     SimpleObj = object
-      name: string
-      otherString: string
+      name*: string
+      otherString*: string
 
   destructor(SimpleObj, identifier = xyz, tagfield = xyz.name):
     if xyz.otherString == "Call":

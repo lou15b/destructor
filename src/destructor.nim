@@ -1,20 +1,22 @@
 import macros
 import tables
 
-proc jsonEnd(): NimNode =
-  ## Generates code to print a JSON element end
-  return quote do:
-    echo "},"
+when defined(traceDestructors):
+  proc jsonEnd(): NimNode =
+    ## Generates code to print a JSON element end
+    return quote do:
+      echo "},"
 
 # =================================================================================
 # Procs to generate `=destroy` calls for the base type and associated trace message
 # =================================================================================
 
-proc destroyBaseObjectJsonStart(destructeeType: NimNode, baseType: NimNode): NimNode =
-  ## Generates code to print the JSON element start for the base type destructor call
-  result = newCall("echo")
-  result.add(newStrLitNode("\"destroy " & $destructeeType & " base type " & 
-    $baseType & "\": {"))
+when defined(traceDestructors):
+  proc destroyBaseObjectJsonStart(destructeeType: NimNode, baseType: NimNode): NimNode =
+    ## Generates code to print the JSON element start for the base type destructor call
+    result = newCall("echo")
+    result.add(newStrLitNode("\"destroy " & $destructeeType & " base type " & 
+      $baseType & "\": {"))
 
 proc destroyBaseObject(objectIdentifier: NimNode, baseType: NimNode): NimNode =
   ## Generates the `=destroy` call for the base type of an object (non-ref) destructee
@@ -92,45 +94,46 @@ proc destroyBaseType(destructeeType: NimNode, destructeeKind: NimNodeKind,
 # Procs to generate `=destroy` calls for the fields and associated trace messages
 # ===============================================================================
 
-proc getTypeString(typeNode: NimNode): string =
-  ## Returns the string representation of the AST for a type
-  if typeNode.kind == nnkSym:
-    result = $typeNode
-  else:
-    result = repr(typeNode)
+when defined(traceDestructors):
+  proc getTypeString(typeNode: NimNode): string =
+    ## Returns the string representation of the AST for a type
+    if typeNode.kind == nnkSym:
+      result = $typeNode
+    else:
+      result = repr(typeNode)
 
-proc getFieldIdent(fieldNode: NimNode): NimNode =
-  assert fieldNode.kind == nnkIdentDefs
-  if fieldNode[0].kind == nnkIdent:
-    # Private field (no post-fix "*")
-    result = fieldNode[0]
-  elif fieldNode[0].kind == nnkPostfix:
-    # Field is marked public ("*")
-    result = fieldNode[0][1]
-  else:
-    error "Unrecognized field declaration (getFieldIdent): " & repr(fieldNode)
+  proc getFieldIdent(fieldNode: NimNode): NimNode =
+    assert fieldNode.kind == nnkIdentDefs
+    if fieldNode[0].kind == nnkIdent:
+      # Private field (no post-fix "*")
+      result = fieldNode[0]
+    elif fieldNode[0].kind == nnkPostfix:
+      # Field is marked public ("*")
+      result = fieldNode[0][1]
+    else:
+      error "Unrecognized field declaration (getFieldIdent): " & repr(fieldNode)
 
-proc getFieldTypeString(fieldIdent: NimNode, ownerFieldList: NimNode): string =
-  ## Returns the string representation of an object field's type
-  ##    fieldIdent = the ident node of the field
-  ##    ownerFieldList = the node containing the object's field definitions
-  let fieldName = $fieldIdent
-  var index = 0
-  for field in ownerFieldList:
-    let ident = getFieldIdent(field)
-    inc index
-    if $ident == fieldName:
-      result = getTypeString(field[1])
-      break
+  proc getFieldTypeString(fieldIdent: NimNode, ownerFieldList: NimNode): string =
+    ## Returns the string representation of an object field's type
+    ##    fieldIdent = the ident node of the field
+    ##    ownerFieldList = the node containing the object's field definitions
+    let fieldName = $fieldIdent
+    var index = 0
+    for field in ownerFieldList:
+      let ident = getFieldIdent(field)
+      inc index
+      if $ident == fieldName:
+        result = getTypeString(field[1])
+        break
 
-proc destroyFieldJsonStart(objectFieldIdentNode: NimNode, ownerFieldList: NimNode): NimNode =
-  ## Generates code to print the JSON element start for a call to the destructor
-  ## of an object's field
-  result = newCall("echo")
-  let fieldIdent = objectFieldIdentNode[1]
-  let fieldTypeString = getFieldTypeString(fieldIdent, ownerFieldList)
-  result.add(newStrLitNode("\"destroy field " & $fieldIdent & " of type " &
-    fieldTypeString & "\": {"))
+  proc destroyFieldJsonStart(objectFieldIdentNode: NimNode, ownerFieldList: NimNode): NimNode =
+    ## Generates code to print the JSON element start for a call to the destructor
+    ## of an object's field
+    result = newCall("echo")
+    let fieldIdent = objectFieldIdentNode[1]
+    let fieldTypeString = getFieldTypeString(fieldIdent, ownerFieldList)
+    result.add(newStrLitNode("\"destroy field " & $fieldIdent & " of type " &
+      fieldTypeString & "\": {"))
 
 proc destroyFieldCodeStmt(fieldNode: NimNode): NimNode =
   ## Generates code for a call to `=destroy` for a single field of an object.
@@ -204,6 +207,20 @@ proc buildDestroyFieldCodeStmts(fieldNode: NimNode, destructeeTypeImpl: NimNode)
   # echo "\n*** Generated code from buildDestroyFieldCodeStmts:\n", repr(result), "\n\n"
 
 macro destroyFields*(destructeeType: typedesc, fields: varargs[untyped]): untyped =
+  ## Macro to generate to call destructor call(s) for the specified field(s)
+  ## of an object. It is intended to be used in the code passed to the
+  ## "destructor" macro.
+  ## The general form of the macro's invocation looks like (using method call syntax):
+  ##    DestructeeType.destroyFields(x.field1, ..., x.fieldN)
+  ## The macro arguments are:
+  ##    DestructeeType = the type (typedesc) of the entity being destroyed
+  ##    x.field = the (qualified) field for which an `=destroy` call is to be
+  ##              generated
+  ## 
+  ## Destructor trace messages
+  ## If the compile option "-d:traceDestructors" is specified, then the destructor
+  ## macro will generate JSON-like trace messages before (and after) the `=destroy`
+  ## call for each field,
   result = newStmtList()
   let destructeeTypeImpl = destructeeType.getImpl
   for field in fields:
@@ -234,56 +251,63 @@ proc parseCodeSpecs(codeSpecs: NimNode, identifier: var NimNode,
   # echo "Number of codeSpec params is ", codeSpecs.len
 
   # assert codeSpecs.kind == nnkArgList
-  if codeSpecs.len < 1 or codeSpecs[^1].kind != nnkStmtList:
-    error("destructor must have a code body")
+  # if codeSpecs.len < 1 or codeSpecs[^1].kind != nnkStmtList:
+  #   error("destructor must have a code body")
 
 
   # Default values
   identifier = ident("x")
   tagfield = newEmptyNode()
-  for codeSpec in codeSpecs[0..^2]:
-    if codeSpec.kind != nnkExprEqExpr:
-      error("destructor argument (" & repr(codeSpec) & ") is not of the form " &
-        "<option> = <value>")
-    let option = codeSpec[0]
-    if option.kind != nnkIdent:
-      error("The lhs of the destructor argument (" & repr(option) & ") must " &
-        "be a simple identifier")
-    if $option == "identifier":
-      if codeSpec[1].kind != nnkIdent:
-        error("The rhs of the 'identifier' option (" & repr(codeSpec[1]) &
-          ") must be a simple identifier")
-      identifier = codeSpec[1]
-    elif $option == "tagfield":
-      # TODO Need better validation of the tagfield option
-      if codeSpec[1].kind != nnkDotExpr:
-        error("The rhs of the 'tagfield' option (" & repr(codeSpec[1]) &
-          ") must be a dot expression (<destructee>.<field>)")
-      tagfield = codeSpec[1]
-    else:
-      error("Invalid destructor option " & $option)
-
-  # The raw body code is the last argument
-  bodyCode = codeSpecs[^1]
+  
+  if codeSpecs.len > 0 and codeSpecs[^1].kind == nnkStmtList:
+    # The macro invocation is for destructor code
+    if codeSpecs.len > 1:
+      for codeSpec in codeSpecs[0..^2]:
+        if codeSpec.kind != nnkExprEqExpr:
+          error("destructor argument (" & repr(codeSpec) & ") is not of the form " &
+            "<option> = <value>")
+        let option = codeSpec[0]
+        if option.kind != nnkIdent:
+          error("The lhs of the destructor argument (" & repr(option) & ") must " &
+            "be a simple identifier")
+        if $option == "identifier":
+          if codeSpec[1].kind != nnkIdent:
+            error("The rhs of the 'identifier' option (" & repr(codeSpec[1]) &
+              ") must be a simple identifier")
+          identifier = codeSpec[1]
+        elif $option == "tagfield":
+          # TODO Need better validation of the tagfield option
+          if codeSpec[1].kind != nnkDotExpr:
+            error("The rhs of the 'tagfield' option (" & repr(codeSpec[1]) &
+              ") must be a dot expression (<destructee>.<field>)")
+          tagfield = codeSpec[1]
+        else:
+          error("Invalid destructor option " & $option)
+    # The raw body code is the last argument
+    bodyCode = codeSpecs[^1]
+  else:
+    # Otherwise the macro invocation is for a forward reference
+    bodyCode = nil
 
   # echo "\n##### parseCodeSpecs - results:"
   # echo "\t identifier = ", repr(identifier)
   # echo "\t tagfield = ", repr(tagfield)
   # echo "\t bodyCode AST:\n", treeRepr(bodyCode)
 
-proc destructorJsonStart(typeNode: NimNode, tagfield: NimNode): NimNode =
-  ## Generates code to print the JSON element start that records the entry
-  ## into the destructee's `=destroy` proc
-  var tag = "\"Destructor for type " & $typeNode
-  if tagfield.kind != nnkEmpty:
-    tag &= " with " & repr(tagfield[1]) & " = \'"
-  
-  result = newCall("echo", newStrLitNode(tag))
-  if tagfield.kind != nnkEmpty:
-    # Add echo argument for tagfield
-    result.add(tagfield)
-    result.add(newStrLitNode("\'"))
-  result.add(newStrLitNode("\": {"))
+when defined(traceDestructors):
+  proc destructorJsonStart(typeNode: NimNode, tagfield: NimNode): NimNode =
+    ## Generates code to print the JSON element start that records the entry
+    ## into the destructee's `=destroy` proc
+    var tag = "\"Destructor for type " & $typeNode
+    if tagfield.kind != nnkEmpty:
+      tag &= " with " & repr(tagfield[1]) & " = \'"
+    
+    result = newCall("echo", newStrLitNode(tag))
+    if tagfield.kind != nnkEmpty:
+      # Add echo argument for tagfield
+      result.add(tagfield)
+      result.add(newStrLitNode("\'"))
+    result.add(newStrLitNode("\": {"))
 
 proc genObjectDestroyProcParameterType(typeNameStr: string): NimNode =
   ## Generates the type portion of the `=destroy` proc's only argument
@@ -361,35 +385,39 @@ proc generateDestructorCode(destructeeType: NimNode, destructeeTypeImpl: NimNode
   # Add the destructee parameter definition to the proc parameters
   paramNodes.add(param1Node)
 
-  # `=destroy` proc body
-  var bodyNode = newNimNode(nnkStmtList)
+  var bodyNode: NimNode = newEmptyNode()  # An empty body node is for a fwd declaration
 
-  when defined(traceDestructors):
-    # Generate a statement to print the initial line of the JSON element for the destructor
-    let entryStmt = destructorJsonStart(destructeeType, tagField)
-    bodyNode.add(entryStmt)
-  
-  # Add the body code
-  bodyNode.add(bodyCode)
+  if not bodyCode.isNil:
+    # The destructor invocation is for an implementation - construct the
+    # `=destroy` proc body
+    bodyNode = newNimNode(nnkStmtList)
 
-  # Append destructor call for base type if necessary
-  var objectDef = destructeeTypeImpl[2]
-  if objectDef.kind == nnkRefTy:
-    # If the destructee is a reference type then the object definition is nested
-    # one level down
-    objectDef = destructeeTypeImpl[2][0]
-  # assert objectDef.kind == nnkObjectTy
-  if objectDef[1].kind == nnkOfInherit:
-    let baseType = objectDef[1][0]
-    if baseType.kind != nnkEmpty:
-      let baseTypeStr = $baseType
-      # echo "##### Base type of " & $destructeeType & " is " & baseTypeStr
-      if baseTypeStr != "RootObj" and baseTypeStr != "RootRef":
-        bodyNode.add(destroyBaseType(destructeeType, destructeeKind, destructeeIdentifier, baseType))
+    when defined(traceDestructors):
+      # Generate a statement to print the initial line of the JSON element for the destructor
+      let entryStmt = destructorJsonStart(destructeeType, tagField)
+      bodyNode.add(entryStmt)
+    
+    # Add the body code
+    bodyNode.add(bodyCode)
 
-  when defined(traceDestructors):
-    # Generate a statement to print the final line of the JSON element for the destructor
-    bodyNode.add(jsonEnd())
+    # Append destructor call for base type if necessary
+    var objectDef = destructeeTypeImpl[2]
+    if objectDef.kind == nnkRefTy:
+      # If the destructee is a reference type then the object definition is nested
+      # one level down
+      objectDef = destructeeTypeImpl[2][0]
+    # assert objectDef.kind == nnkObjectTy
+    if objectDef[1].kind == nnkOfInherit:
+      let baseType = objectDef[1][0]
+      if baseType.kind != nnkEmpty:
+        let baseTypeStr = $baseType
+        # echo "##### Base type of " & $destructeeType & " is " & baseTypeStr
+        if baseTypeStr != "RootObj" and baseTypeStr != "RootRef":
+          bodyNode.add(destroyBaseType(destructeeType, destructeeKind, destructeeIdentifier, baseType))
+
+    when defined(traceDestructors):
+      # Generate a statement to print the final line of the JSON element for the destructor
+      bodyNode.add(jsonEnd())
 
   result = newProc(procNameNode, paramNodes, bodyNode)
 
@@ -401,13 +429,13 @@ proc generateDestructorCode(destructeeType: NimNode, destructeeTypeImpl: NimNode
 macro destructor*(destructeeType: typedesc, codeSpecs: varargs[untyped]): untyped =
   ## Macro to generate the definition for the `=destroy` hook for an object or
   ## ref object type.
-  ## The general form of a the macro's invocation looks like:
-  ##    destructor(DestructeeType[, identifier = <variable name>]
+  ## The general form of the macro's invocation looks like (using method call syntax):
+  ##    DestructeeType.destructor([identifier = <variable name>]
   ##        [, tagfield = <identifier>.<field name>]):
   ##      <custom destructor code>
-  ##      destroyFields(identifier.field1, ..., identifier.fieldN)
+  ##      DestructeeType.destroyFields(identifier.field1, ..., identifier.fieldN)
   ##      <more custom destructor code>
-  ##      destroyFields(identifier.fieldM, ..., identifier.fieldQ)
+  ##      DestructeeType.destroyFields(identifier.fieldM, ..., identifier.fieldQ)
   ##      <still more custom destructor code>
   ##      <... etc.>
   ## The macro arguments are:
@@ -421,8 +449,9 @@ macro destructor*(destructeeType: typedesc, codeSpecs: varargs[untyped]): untype
   ##                          Default is no tag field
   ## The body code of the macro invocation consists of two types of code statements:
   ##    - any custom user code required for the destructor
-  ##    - one or more "destroyFields(...) call statements, specifying fields for which
-  ##      `=destroy` calls are to be generated. The calls are  generated in same
+  ##    - one or more "destroyFields(...) macro calls call statements, specifying
+  ##      fields for which `=destroy` calls are to be generated. See the description
+  ##      of the "destroyFields" macro for details The calls are  generated in same
   ##      order as they appear in the call.
   ## The above code statements can be mingled in whatever way is appropriate.
   ## 
@@ -433,7 +462,7 @@ macro destructor*(destructeeType: typedesc, codeSpecs: varargs[untyped]): untype
   ## Destructor trace messages
   ## If the compile option "-d:traceDestructors" is specified, then the destructor
   ## macro will generate JSON-like trace messages at the beginning (and end) of the
-  ## `=destroy` body, before (and after) the `=destroy` call each for each field,
+  ## `=destroy` body, before (and after) the `=destroy` call for each field,
   ## and before (and after) the `=destroy` call for the base type. (The end/after
   ## trace message is merely a JSON element terminator "}".)
   ## 
@@ -461,6 +490,14 @@ macro destructor*(destructeeType: typedesc, codeSpecs: varargs[untyped]): untype
   # echo "\n### Destructor generated code equivalent:\n", repr(result), "\n\n"
   # echo "\n### Destructor generated AST:\n", treeRepr(result), "\n\n"
 
+# =================================================================
+# The traceDestructor template
+# =================================================================
+template traceDestructor*(destructeeType: typedesc, codeSpecs: varargs[untyped]) =
+  when defined(traceDestructors):
+    destructor(destructeeType, codeSpecs)
+  else:
+    discard
 
 # =================================================================
 # Tests, showing some usage examples
@@ -478,17 +515,26 @@ when isMainModule:
   #   - Specification of the tag field
   #   - Embedding destroyFields(...) calls in other code
   #   - Invoking destroyFields using both Call and Command conventions
+  #   - Use of method call syntax for macro invocation
   # ---------------------------
   type
     SimpleObj = object
       name*: string
       otherString*: string
 
-  destructor(SimpleObj, identifier = xyz, tagfield = xyz.name):
-    if xyz.otherString == "Call":
-      destroyFields(SimpleObj, xyz.name, xyz.otherString)
+  SimpleObj.destructor()    # Fwd declaration
+
+  # SimpleObj.destructor(identifier = xyz, tagfield = xyz.name):
+  #   if xyz.otherString == "Call":
+  #     SimpleObj.destroyFields(xyz.name, xyz.otherString)
+  #   else:
+  #     SimpleObj.destroyFields xyz.name, xyz.otherString
+  #   discard
+  SimpleObj.destructor(tagfield = x.name):
+    if x.otherString == "Call":
+      SimpleObj.destroyFields(x.name, x.otherString)
     else:
-      destroyFields SimpleObj, xyz.name, xyz.otherString
+      SimpleObj.destroyFields x.name, x.otherString
     discard
 
   proc testCase1() =
@@ -503,8 +549,8 @@ when isMainModule:
     TestObj = object of RootObj
       simpleObj: SimpleObj
 
-  destructor(TestObj):
-    destroyFields(TestObj, x.simpleObj)
+  TestObj.destructor:
+    TestObj.destroyFields(x.simpleObj)
 
   proc testCase2() =
     echo "\n\nTest Case 2"
@@ -519,8 +565,8 @@ when isMainModule:
     TestObj2 = object of RootObj
       simpleObjTuple: tuple[str: string, simpleObj: SimpleObj]
 
-  destructor(TestObj2):
-    destroyFields(TestObj2, x.simpleObjTuple)
+  TestObj2.destructor():
+    TestObj2.destroyFields(x.simpleObjTuple)
 
   proc testCase3() =
     echo "\n\nTest Case 3"
@@ -537,8 +583,8 @@ when isMainModule:
       objname: string
       ph: SimpleObj
 
-  destructor(TestSubObj, tagfield = x.objname):
-    destroyFields(TestSubObj, x.ph, x.objname)
+  TestSubObj.destructor(tagfield = x.objname):
+    TestSubObj.destroyFields(x.ph, x.objname)
 
   proc testCase4() =
     echo "\n\nTest Case 4"
@@ -555,8 +601,8 @@ when isMainModule:
       singleSimpleObj: SimpleObj
       simpleObjSeq: seq[SimpleObj]
 
-  destructor(TestRef, tagfield = x.name):
-    destroyFields(TestRef, x.singleSimpleObj, x.simpleObjSeq, x.name)
+  TestRef.destructor(tagfield = x.name):
+    TestRef.destroyFields(x.singleSimpleObj, x.simpleObjSeq, x.name)
 
   proc testCase5() =
     echo "\n\nTest Case 5"
@@ -576,8 +622,8 @@ when isMainModule:
       name: string
       simpleObjArray: array[3, SimpleObj]
 
-  destructor(TestRef2, tagfield = x.name):
-    destroyFields(TestRef2, x.simpleObjArray, x.name)
+  TestRef2.destructor(tagfield = x.name):
+    TestRef2.destroyFields(x.simpleObjArray, x.name)
 
   proc testCase6() =
     echo "\n\nTest Case 6"
@@ -599,11 +645,11 @@ when isMainModule:
     CompositeTestRef = ref object of TestRef
       mMarkers: seq[Marker]
 
-  destructor(Marker, tagfield = x.name):
-    destroyFields(Marker, x.name, x.tref)
+  Marker.destructor(tagfield = x.name):
+    Marker.destroyFields(x.name, x.tref)
 
-  destructor(CompositeTestRef):
-    destroyFields(CompositeTestRef, x.mMarkers)
+  CompositeTestRef.destructor:
+    CompositeTestRef.destroyFields(x.mMarkers)
 
   proc testCase7() =
     echo "\n\nTest Case 7"
@@ -642,8 +688,8 @@ when isMainModule:
     MetaTestRef = ref object of TestRef
       trefs: seq[TestRef]
 
-  destructor(MetaTestRef):
-    destroyFields(MetaTestRef, x.trefs)
+  MetaTestRef.destructor:
+    MetaTestRef.destroyFields(x.trefs)
 
   proc testCase8() =
     echo "\n\nTest Case 8"
@@ -701,13 +747,11 @@ when isMainModule:
     TableTestRef = ref object of RootRef
       tableField: Table[string, SimpleTestRef]
 
-  destructor(SimpleTestRef, tagfield = x.name):
-    destroyFields(SimpleTestRef, x.name)
+  SimpleTestRef.destructor(tagfield = x.name):
+    SimpleTestRef.destroyFields(x.name)
 
-  destructor(TableTestRef):
-    # See testCase9() below.
-    # This destructor illustrates:
-   destroyFields(TableTestRef, x.tableField)
+  TableTestRef.destructor:
+    TableTestRef.destroyFields(x.tableField)
 
   proc testCase9() =
     echo "\n\nTest Case 9"
@@ -733,8 +777,8 @@ when isMainModule:
     RefTableTestRef = ref object of RootRef
       refTableField: TableRef[string, SimpleTestRef]
 
-  destructor(RefTableTestRef):
-    destroyFields(RefTableTestRef, x.refTableField)
+  RefTableTestRef.destructor:
+    RefTableTestRef.destroyFields(x.refTableField)
 
   proc testCase10() =
     echo "\n\nTest Case 10"
@@ -761,8 +805,8 @@ when isMainModule:
     ClosureTestRef = ref object of RootRef
       closureField: proc()
 
-  destructor(ClosureTestRef):
-    destroyFields(ClosureTestRef, x.closureField)
+  ClosureTestRef.destructor():
+    ClosureTestRef.destroyFields(x.closureField)
 
   proc getTestClosureProc(): proc() =
     let str1 = SimpleTestRef.new()
@@ -774,6 +818,34 @@ when isMainModule:
     echo "\n\nTest Case 11"
     var ctr = ClosureTestRef.new()
     ctr.closureField = getTestClosureProc()
+
+  # ---------------------------
+  # Use Case 12:
+  #   - Use of the "traceDestructor" template
+  # ---------------------------
+  type
+    SimpleObjX = object
+      name*: string
+
+  SimpleObjX.traceDestructor()  # Fwd declaration
+
+  # SimpleObjX.traceDestructor(identifier = xyz, tagfield = xyz.name):
+  #   echo "##### Entered traceDestructor template for SimpleObjX"
+  #   SimpleObjX.destroyFields(xyz.name)
+  SimpleObjX.traceDestructor(tagfield = x.name):
+    echo "##### Entered traceDestructor template for SimpleObjX"
+    SimpleObjX.destroyFields(x.name)
+
+  proc testCase12() =
+    echo "\n\nTest Case 12"
+    when defined(traceDestructors):
+      echo "---- Compiled WITH '-d:traceDestructors' - there should be ",
+        " a message indicating that the traceDestructor code was entered"
+    else:
+      echo "---- Compiled WITHOUT '-d:traceDestructors' - there should NOT be ",
+        " a message indicating that the traceDestructor code was entered"
+
+    let ph1 {.used.} = SimpleObjX(name: "xxxx")
 
   # ---------------------------
 
@@ -789,6 +861,7 @@ when isMainModule:
     testCase9()
     testCase10()
     testCase11()
+    testCase12()
 
 
   main()

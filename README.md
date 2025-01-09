@@ -43,26 +43,21 @@ generate printing of trace messages for debug purposes, if desired.
 The general form used to invoke the `destructor` macro looks like (using method call
 syntax):
 ```nim
-   DestructeeType.destructor([identifier = <variable name>]
-       [, tagfield = <identifier>.<field name>]):
+   DestructeeType.destructor([tagfield = x.<field name>]):
      <custom destructor code>
-     DestructeeType.destroyFields(identifier.field1, ..., identifier.fieldN)
+     DestructeeType.destroyFields(x.field1, ..., x.fieldN)
      <more custom destructor code>
-     DestructeeType.destroyFields(identifier.fieldM, ..., identifier.fieldQ)
+     DestructeeType.destroyFields(x.fieldM, ..., x.fieldQ)
      <still more custom destructor code>
      <... etc.>
 ```
 The macro arguments are:
-```
-   `DestructeeType` = the type (typedesc) of the entity being destroyed
-   `identifier` (optional) = the identifier that refers to the entity being
-                           destroyed.
-                           Default is "x"
-   `tagfield` (optional) = the field whose value identifies the individual
-                         instance being destroyed in the destructor's trace
-                         message. See `Destructor trace messages` below.
-                         Default is no tag field
-```
+  - `DestructeeType` = the type (typedesc) of the entity being destroyed
+  - `tagfield` (optional) = the field whose value identifies the individual
+    instance being destroyed in the destructor's trace
+    message. See `Destructor trace messages` below.
+    Default is no tag field
+
 The body code of the macro invocation consists of two types of code statements:
    - any custom user code required for the destructor
    - one or more `destroyFields(...)` call statements, specifying fields for which
@@ -97,12 +92,11 @@ generates its own implementation of the `=destroy` hook as part of its operation
 
 Use of the `traceDestructor` template is similar to the `destructor` macro:
 ```nim
-   DestructeeType.traceDestructor([identifier = <variable name>]
-       [, tagfield = <identifier>.<field name>]):
+   DestructeeType.traceDestructor([tagfield = x.<field name>]):
      <custom destructor code>
-     DestructeeType.destroyFields(identifier.field1, ..., identifier.fieldN)
+     DestructeeType.destroyFields(x.field1, ..., x.fieldN)
      <more custom destructor code>
-     DestructeeType.destroyFields(identifier.fieldM, ..., identifier.fieldQ)
+     DestructeeType.destroyFields(x.fieldM, ..., x.fieldQ)
      <still more custom destructor code>
      <... etc.>
 ```
@@ -145,22 +139,15 @@ Second, let's assume that the field `name` is used to identify the instance of t
    destroyFields(x.name, x.otherString)
 ```
 
-Third, let's suppose we want to use "xyz" instead of "x" to represent the
-entity being destroyed.
-```nim
- destructor(SimpleT, identifier = xyz, tagfield = xyz.name):
-   destroyFields(xyz.name, xyz.otherString)
-```
-
 Finally, let's put some custom user code into the destructor.
 ```nim
- destructor(SimpleT, identifier = xyz, tagfield = xyz.name):
-   if xyz.otherString == "Call":
+ destructor(SimpleT, tagfield = x.name):
+   if x.otherString == "Call":
      # If otherString is "Call" then use the Call convention to invoke destroyFields
-     destroyFields(xyz.name, xyz.otherString)
+     destroyFields(x.name, x.otherString)
    else:
      # Otherwise use the Command convention to invoke destroyFields
-     destroyFields xyz.name, xyz.otherString
+     destroyFields x.name, x.otherString
 ```
 
 Destructor trace messages
@@ -185,8 +172,8 @@ type
   TestT = ref object of RootRef
     simpleX: SimpleT
   
-destructor(SimpleT, identifier = xyz, tagfield = xyz.name):
-  destroyFields(xyz.name, xyz.otherString)
+destructor(SimpleT, tagfield = x.name):
+  destroyFields(x.name, x.otherString)
   
 destructor(TestT):
   destroyFields(x.simpleX)

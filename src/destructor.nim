@@ -230,14 +230,11 @@ macro destroyFields*(destructeeType: typedesc, fields: varargs[untyped]): untype
 # Procs to generate the `=destroy` proc declaration and associated trace messages
 # ===============================================================================
 
-proc parseCodeSpecs(codeSpecs: NimNode, identifier: var NimNode,
-    tagfield: var NimNode, bodyCode: var NimNode) =
+proc parseCodeSpecs(codeSpecs: NimNode, tagfield: var NimNode,
+      bodyCode: var NimNode) =
   ## Parses the destructor macro's untyped arguments to obtain the code generation
   ## options and the (unexpanded) body code in the macro's invocation.
   ##    codeSpecs = the list of the macro's untyped arguments
-  ##    identifier = the variable to receive the identifier node representing the
-  ##                 destructee
-  ##                 Default is "x"
   ##    tagfield = the variable to receive the AST node of the tag field, if any.
   ##               The tag field is the destructee's field whose value is used
   ##               in the destructor's trace message to identify the particular
@@ -255,8 +252,7 @@ proc parseCodeSpecs(codeSpecs: NimNode, identifier: var NimNode,
   #   error("destructor must have a code body")
 
 
-  # Default values
-  identifier = ident("x")
+  # Default value
   tagfield = newEmptyNode()
   
   if codeSpecs.len > 0 and codeSpecs[^1].kind == nnkStmtList:
@@ -270,11 +266,6 @@ proc parseCodeSpecs(codeSpecs: NimNode, identifier: var NimNode,
         if option.kind != nnkIdent:
           error("The lhs of the destructor argument (" & repr(option) & ") must " &
             "be a simple identifier")
-        if $option == "identifier":
-          if codeSpec[1].kind != nnkIdent:
-            error("The rhs of the 'identifier' option (" & repr(codeSpec[1]) &
-              ") must be a simple identifier")
-          identifier = codeSpec[1]
         elif $option == "tagfield":
           # TODO Need better validation of the tagfield option
           if codeSpec[1].kind != nnkDotExpr:
@@ -290,7 +281,6 @@ proc parseCodeSpecs(codeSpecs: NimNode, identifier: var NimNode,
     bodyCode = nil
 
   # echo "\n##### parseCodeSpecs - results:"
-  # echo "\t identifier = ", repr(identifier)
   # echo "\t tagfield = ", repr(tagfield)
   # echo "\t bodyCode AST:\n", treeRepr(bodyCode)
 
@@ -341,11 +331,10 @@ proc genDestroyProcParameterType(destructeeType: NimNode,
       "(genDestroyProcParameterType)"
 
 proc generateDestructorCode(destructeeType: NimNode, destructeeTypeImpl: NimNode,
-    destructeeIdentifier: NimNode, tagField: NimNode, bodyCode: NimNode): NimNode =
+    tagField: NimNode, bodyCode: NimNode): NimNode =
   ## Generates the complete `=destroy` proc definition for the destructor macro
   ##    destructeeType = typedesc of the destructee's type
   ##    destructeeTypeImpl = (typed) AST of the destructee's type definition
-  ##    identifier = the identifier node representing the destructee
   ##    tagfield = the AST node of the tag field, if any.
   ##               The tag field is the destructee's field whose value is used
   ##               in the destructor's trace message to identify the particular
@@ -369,6 +358,7 @@ proc generateDestructorCode(destructeeType: NimNode, destructeeTypeImpl: NimNode
   paramNodes.add(returnTypeNode)
 
   # First (and only) parameter definition
+  let destructeeIdentifier = ident("x")   # The symbol for the destructee is "x"
   var param1Node = newNimNode(nnkIdentDefs)
   param1Node.add(destructeeIdentifier)     # parameter name
 
@@ -430,24 +420,21 @@ macro destructor*(destructeeType: typedesc, codeSpecs: varargs[untyped]): untype
   ## Macro to generate the definition for the `=destroy` hook for an object or
   ## ref object type.
   ## The general form of the macro's invocation looks like (using method call syntax):
-  ##    DestructeeType.destructor([identifier = <variable name>]
-  ##        [, tagfield = <identifier>.<field name>]):
+  ##    DestructeeType.destructor([tagfield = x.<field name>]):
   ##      <custom destructor code>
-  ##      DestructeeType.destroyFields(identifier.field1, ..., identifier.fieldN)
+  ##      DestructeeType.destroyFields(x.field1, ..., x.fieldN)
   ##      <more custom destructor code>
-  ##      DestructeeType.destroyFields(identifier.fieldM, ..., identifier.fieldQ)
+  ##      DestructeeType.destroyFields(x.fieldM, ..., x.fieldQ)
   ##      <still more custom destructor code>
   ##      <... etc.>
   ## The macro arguments are:
   ##    DestructeeType = the type (typedesc) of the entity being destroyed
-  ##    identifier (optional) = the identifier that refers to the entity being
-  ##                            destroyed.
-  ##                            Default is "x"
   ##    tagfield (optional) = the field whose value identifies the individual
   ##                          instance being destroyed in the destructor's trace
   ##                          message. See below.
   ##                          Default is no tag field
-  ## The body code of the macro invocation consists of two types of code statements:
+  ## The body code of the macro invocation consists of two types of code statements.
+  ## Note that the symbol representing the object being destroyed is defined to be "x".
   ##    - any custom user code required for the destructor
   ##    - one or more "destroyFields(...) macro calls call statements, specifying
   ##      fields for which `=destroy` calls are to be generated. See the description
@@ -475,17 +462,14 @@ macro destructor*(destructeeType: typedesc, codeSpecs: varargs[untyped]): untype
   #   echo "\n## AST of codeSpec ", index, ":\n", treeRepr(codeSpec)
   #   inc index
   
-  var identifier: NimNode
   var tagfield: NimNode
   var bodyCode: NimNode
   # Parse the untyped arguments
-  parseCodeSpecs(codeSpecs, identifier, tagfield, bodyCode)
-
-  # assert bodyCode.kind == nnkStmtList
+  parseCodeSpecs(codeSpecs, tagfield, bodyCode)
 
   # Generate the code
-  result = generateDestructorCode(destructeeType, destructeeTypeImpl, identifier,
-    tagfield, bodyCode)
+  result = generateDestructorCode(destructeeType, destructeeTypeImpl, tagfield,
+    bodyCode)
   
   # echo "\n### Destructor generated code equivalent:\n", repr(result), "\n\n"
   # echo "\n### Destructor generated AST:\n", treeRepr(result), "\n\n"
@@ -510,8 +494,6 @@ when isMainModule:
   #   - A simple object type where one of the fields (name) identifies the
   #     object instance - i.e. "name" is the tag field
   #   - Both fields are public
-  #   - Use of an alternate identifier in the destructor for the entity being
-  #     destroyed (xyz instead of the default, x)
   #   - Specification of the tag field
   #   - Embedding destroyFields(...) calls in other code
   #   - Invoking destroyFields using both Call and Command conventions
@@ -524,12 +506,6 @@ when isMainModule:
 
   SimpleObj.destructor()    # Fwd declaration
 
-  # SimpleObj.destructor(identifier = xyz, tagfield = xyz.name):
-  #   if xyz.otherString == "Call":
-  #     SimpleObj.destroyFields(xyz.name, xyz.otherString)
-  #   else:
-  #     SimpleObj.destroyFields xyz.name, xyz.otherString
-  #   discard
   SimpleObj.destructor(tagfield = x.name):
     if x.otherString == "Call":
       SimpleObj.destroyFields(x.name, x.otherString)
@@ -829,9 +805,6 @@ when isMainModule:
 
   SimpleObjX.traceDestructor()  # Fwd declaration
 
-  # SimpleObjX.traceDestructor(identifier = xyz, tagfield = xyz.name):
-  #   echo "##### Entered traceDestructor template for SimpleObjX"
-  #   SimpleObjX.destroyFields(xyz.name)
   SimpleObjX.traceDestructor(tagfield = x.name):
     echo "##### Entered traceDestructor template for SimpleObjX"
     SimpleObjX.destroyFields(x.name)

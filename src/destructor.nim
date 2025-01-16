@@ -103,13 +103,15 @@ when defined(traceDestructors):
       result = repr(typeNode)
 
   proc getFieldIdent(fieldNode: NimNode): NimNode =
-    assert fieldNode.kind == nnkIdentDefs
     if fieldNode[0].kind == nnkIdent:
       # Private field (no post-fix "*")
       result = fieldNode[0]
     elif fieldNode[0].kind == nnkPostfix:
       # Field is marked public ("*")
       result = fieldNode[0][1]
+    elif fieldNode[0].kind == nnkPragmaExpr:
+      # Field has a pragma
+      result = getFieldIdent(fieldNode[0])
     else:
       error "Unrecognized field declaration (getFieldIdent): " & repr(fieldNode)
 
@@ -591,14 +593,18 @@ when isMainModule:
 
   # ---------------------------
   # Use Case 6:
-  #   - A ref object with a field that is an array of objects
+  #   - A ref object with private and public fields that are cursor ref's
+  #     and a field that is an array of objects
   # ---------------------------
   type
     TestRef2 = ref object of RootRef
       name: string
+      testCursor1 {.cursor.}: TestRef
+      testCursor2* {.cursor.}: TestRef
       simpleObjArray: array[3, SimpleObj]
 
   TestRef2.destructor(tagfield = x.name):
+    # Note that cursor fields do not need destruction
     TestRef2.destroyFields(x.simpleObjArray, x.name)
 
   proc testCase6() =

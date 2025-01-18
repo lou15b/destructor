@@ -332,6 +332,12 @@ proc genDestroyProcParameterType(destructeeType: NimNode,
     error "destructor macro only supports object and ref object types " &
       "(genDestroyProcParameterType)"
 
+proc eqDestroy(): NimNode =
+  # "`=destroy`" proc name definition
+  result = newNimNode(nnkAccQuoted)
+  result.add(newIdentNode("="))
+  result.add(newIdentNode("destroy"))
+
 proc generateDestructorCode(destructeeType: NimNode, destructeeTypeImpl: NimNode,
     tagField: NimNode, bodyCode: NimNode): NimNode =
   ## Generates the complete `=destroy` proc definition for the destructor macro
@@ -348,10 +354,17 @@ proc generateDestructorCode(destructeeType: NimNode, destructeeTypeImpl: NimNode
   # echo "\n##### generateDestructorCode"
   # echo "##### Impl of ", $destructeeType, " is:\n", treeRepr(destructeeTypeImpl)
 
-  # destructor proc name definition ("`=destroy`")
-  var procNameNode = newNimNode(nnkAccQuoted)
-  procNameNode.add(newIdentNode("="))
-  procNameNode.add(newIdentNode("destroy"))
+  var procNameNode: NimNode
+  if (destructeeTypeImpl[0].kind == nnkPostfix):
+    if (destructeeTypeImpl[0][0].kind != nnkIdent or destructeeTypeImpl[0][0].strval() != "*"):
+      error("Unrecognized destructee type declaration: " & repr(destructeeTypeImpl[0]))
+    # destructeeType is marked as exported, so the generated `=destroy` proc
+    # needs to be marked as exported ("`=destroy`*")
+    procNameNode = newNimNode(nnkPostfix)
+    procNameNode.add(newIdentNode("*"))
+    procNameNode.add(eqDestroy())
+  else:
+    procNameNode = eqDestroy()
 
   # destructor proc return type & parameters
   var paramNodes = newSeq[NimNode]()
@@ -493,16 +506,16 @@ template traceDestructor*(destructeeType: typedesc, codeSpecs: varargs[untyped])
 when isMainModule:
   # ---------------------------
   # Use Case 1:
-  #   - A simple object type where one of the fields (name) identifies the
-  #     object instance - i.e. "name" is the tag field
-  #   - Both fields are public
+  #   - An exported simple object type where one of the fields (name) identifies
+  #     the object instance - i.e. "name" is the tag field
+  #   - Both fields are exported
   #   - Specification of the tag field
   #   - Embedding destroyFields(...) calls in other code
   #   - Invoking destroyFields using both Call and Command conventions
   #   - Use of method call syntax for macro invocation
   # ---------------------------
   type
-    SimpleObj = object
+    SimpleObj* = object
       name*: string
       otherString*: string
 

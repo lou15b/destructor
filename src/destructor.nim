@@ -18,10 +18,19 @@ when defined(traceDestructors):
     result.add(newStrLitNode("\"destroy " & $destructeeType & " base type " & 
       $baseType & "\": {"))
 
+proc addrCallDotBracket(objectIdentifier: NimNode): NimNode =
+  ## Generates "x.addr()[]" code for the given identifier (x)
+  let addrDot = newDotExpr(objectIdentifier, ident("addr"))   # x.addr
+  let addrCallDot = newCall(addrDot)   # x.addr()
+  result = newNimNode(nnkBracketExpr)
+  result.add(addrCallDot)   # x.addr()[]
+
 proc destroyBaseObject(objectIdentifier: NimNode, baseType: NimNode): NimNode =
   ## Generates the `=destroy` call for the base type of an object (non-ref) destructee
   ## Generates code equivalent to:
-  ##    `=destroy`(baseType(x))
+  ##    `=destroy`(BaseType(x.addr()[]))
+  ## (Note that "`=destroy`(BaseType(x))" doesn't work if the `=destroy` hook
+  ##  for BaseType wasn't explicitly implemented)
   
   # assert objectIdentifier.kind == nnkIdent
   # assert baseType.kind == nnkSym
@@ -29,14 +38,16 @@ proc destroyBaseObject(objectIdentifier: NimNode, baseType: NimNode): NimNode =
 
   result = newNimNode(nnkStmtList)
 
-  let castArg = newCall(baseType, objectIdentifier)
-  let destructorCall = newCall("=destroy", castArg)
-  result.add destructorCall
+  let baseCast = newCall(baseType, addrCallDotBracket(objectIdentifier))   # TestObj(x.addr()[])
+  let destructorCall = newCall("=destroy", baseCast)   # `=destroy`(TestObj(x.addr()[]))
+  result.add destructorCall   # 
 
 proc destroyBaseRefObject(objectIdentifier: NimNode, baseType: NimNode): NimNode =
   ## Generates the `=destroy` call for the base type of a ref object destructee
   ## Generates code equivalent to:
-  ##    `=destroy`(typeof(BaseRefType()[])(x))
+  ##    `=destroy`(typeof(BaseRefType()[])(x.addr()[]))
+  ## (Note that "`=destroy`(typeof(BaseRefType()[])(x))" doesn't work if the `=destroy` hook
+  ##  for BaseRefType wasn't explicitly implemented)
   
   # assert objectIdentifier.kind == nnkIdent
   # assert baseType.kind == nnkSym
@@ -62,11 +73,12 @@ proc destroyBaseRefObject(objectIdentifier: NimNode, baseType: NimNode): NimNode
   let typeofCode = newCall("typeof", objCode)
 
   #   Fourth we need to cast the object to be destroyed to the base object type
-  #   i.e. "typeof(BaseRefType()[])(x)"
-  let castArg = newCall(typeofCode, objectIdentifier)
+  #   i.e. "typeof(BaseRefType()[])(x.addr()[])"
+  let baseCast = newCall(typeofCode, addrCallDotBracket(objectIdentifier))
 
   # Finally, generate the destructor call
-  let destructorCall = newCall("=destroy", castArg)
+  #   i.e. "`=destroy`(typeof(TestBaseRef()[])(x.addr()[]))"
+  let destructorCall = newCall("=destroy", baseCast)
   result.add(destructorCall)
 
 proc destroyBaseType(destructeeType: NimNode, destructeeKind: NimNodeKind,
@@ -584,6 +596,81 @@ when isMainModule:
 
   # ---------------------------
   # Use Case 5:
+  #   - An object type that is a sub-type of another object type, but only
+  #     the sub-type has a destructor defined
+  # ---------------------------
+  type
+    TestObjx = object of RootObj
+      simpleObj: SimpleObj
+
+    TestSubObjx = object of TestObjx
+      objname: string
+      ph: SimpleObj
+
+  TestSubObjx.destructor(tagfield = x.objname):
+    TestSubObjx.destroyFields(x.ph, x.objname)
+
+  proc testCase5() =
+    echo "\n\nTest Case 5"
+    var t1 = TestSubObjx(objname: "tso1", ph: SimpleObj(name: "ph1"))
+    t1.simpleObj = SimpleObj(name: "ph2")
+
+  # ---------------------------
+  # Use Case 6:
+  #   - A ref object type with a field whose type has a destructor defined
+  # ---------------------------
+  type
+    TestBaseRef = ref object of RootRef
+      simpleObj: SimpleObj
+
+  TestBaseRef.destructor:
+    TestBaseRef.destroyFields(x.simpleObj)
+
+  proc testCase6() =
+    echo "\n\nTest Case 6"
+    let t1 {.used.} = TestBaseRef(simpleObj: SimpleObj(name: "ph1", otherString: "xfghxfg"))
+
+  # ---------------------------
+  # Use Case 7:
+  #   - A ref object type that is a sub-type of another ref object type, both of which
+  #     have a destructor defined
+  # ---------------------------
+  type
+    TestSubRef = ref object of TestBaseRef
+      objname: string
+      ph: SimpleObj
+
+  TestSubRef.destructor(tagfield = x.objname):
+    TestSubRef.destroyFields(x.ph, x.objname)
+
+  proc testCase7() =
+    echo "\n\nTest Case 7"
+    var t1 = TestSubRef(objname: "tro1", ph: SimpleObj(name: "ph1"))
+    t1.simpleObj = SimpleObj(name: "ph2")
+
+  # ---------------------------
+  # Use Case 8:
+  #   - A ref object type that is a sub-type of another ref object type, but only
+  #     the sub-type has a destructor defined
+  # ---------------------------
+  type
+    TestBaseRefx = ref object of RootRef
+      simpleObj: SimpleObj
+
+    TestSubRefx = ref object of TestBaseRefx
+      objname: string
+      ph: SimpleObj
+
+  TestSubRefx.destructor(tagfield = x.objname):
+    TestSubRefx.destroyFields(x.ph, x.objname)
+
+  proc testCase8() =
+    echo "\n\nTest Case 8"
+    var t1 = TestSubRefx(objname: "tso1", ph: SimpleObj(name: "ph1"))
+    t1.simpleObj = SimpleObj(name: "ph2")
+
+  # ---------------------------
+  # Use Case 9:
   #   - A ref object with a field that is a seq of objects
   # ---------------------------
   type
@@ -595,8 +682,8 @@ when isMainModule:
   TestRef.destructor(tagfield = x.name):
     TestRef.destroyFields(x.singleSimpleObj, x.simpleObjSeq, x.name)
 
-  proc testCase5() =
-    echo "\n\nTest Case 5"
+  proc testCase9() =
+    echo "\n\nTest Case 9"
     var tr = TestRef.new()
     tr.name = "tr1"
     tr.singleSimpleObj = SimpleObj(name: "sph")
@@ -605,7 +692,7 @@ when isMainModule:
       SimpleObj(name: "ph2")]
 
   # ---------------------------
-  # Use Case 6:
+  # Use Case 10:
   #   - A ref object with private and public fields that are cursor ref's
   #     and a field that is an array of objects
   # ---------------------------
@@ -620,8 +707,8 @@ when isMainModule:
     # Note that cursor fields do not need destruction
     TestRef2.destroyFields(x.simpleObjArray, x.name)
 
-  proc testCase6() =
-    echo "\n\nTest Case 6"
+  proc testCase10() =
+    echo "\n\nTest Case 10"
     var tr = TestRef2.new()
     tr.name = "tr1"
     tr.simpleObjArray[0]= SimpleObj(name: "pha0")
@@ -629,7 +716,7 @@ when isMainModule:
     tr.simpleObjArray[2]= SimpleObj(name: "pha2")
 
   # ---------------------------
-  # Use Case 7:
+  # Use Case 11:
   #   - A ref object with a field that is a seq of ref objects
   # ---------------------------
   type
@@ -646,8 +733,8 @@ when isMainModule:
   CompositeTestRef.destructor:
     CompositeTestRef.destroyFields(x.mMarkers)
 
-  proc testCase7() =
-    echo "\n\nTest Case 7"
+  proc testCase11() =
+    echo "\n\nTest Case 11"
     var ctr = CompositeTestRef.new()
 
     var marker0 = Marker.new()
@@ -676,7 +763,7 @@ when isMainModule:
       SimpleObj(name: "phc")]
 
   # ---------------------------
-  # Use Case 8:
+  # Use Case 12:
   #   - A complex nesting of ref objects, each whose type has a destructor defined
   # ---------------------------
   type
@@ -686,8 +773,8 @@ when isMainModule:
   MetaTestRef.destructor:
     MetaTestRef.destroyFields(x.trefs)
 
-  proc testCase8() =
-    echo "\n\nTest Case 8"
+  proc testCase12() =
+    echo "\n\nTest Case 12"
     var mtr = MetaTestRef.new()
 
     var tref = TestRef.new()
@@ -732,7 +819,7 @@ when isMainModule:
       SimpleObj(name: "phmtrc")]
 
   # ---------------------------
-  # Use Case 9:
+  # Use Case 13:
   #   - A ref object with a field that is a Table of ref objects
   # ---------------------------
   type
@@ -748,8 +835,8 @@ when isMainModule:
   TableTestRef.destructor:
     TableTestRef.destroyFields(x.tableField)
 
-  proc testCase9() =
-    echo "\n\nTest Case 9"
+  proc testCase13() =
+    echo "\n\nTest Case 13"
     var ttr = TableTestRef.new()
 
     let value1 = SimpleTestRef.new()
@@ -765,7 +852,7 @@ when isMainModule:
     ttr.tableField["name3"] = value3
 
   # ---------------------------
-  # Use Case 10:
+  # Use Case 14:
   #   - A ref object with a field that is a TableRef of ref objects
   # ---------------------------
   type
@@ -775,8 +862,8 @@ when isMainModule:
   RefTableTestRef.destructor:
     RefTableTestRef.destroyFields(x.refTableField)
 
-  proc testCase10() =
-    echo "\n\nTest Case 10"
+  proc testCase14() =
+    echo "\n\nTest Case 14"
     var rttr = RefTableTestRef.new()
     rttr.refTableField = newTable[string, SimpleTestRef]()
 
@@ -793,7 +880,7 @@ when isMainModule:
     rttr.refTableField["name3"] = value3
 
   # ---------------------------
-  # Use Case 11:
+  # Use Case 15:
   #   - A ref object with a field that is a closure
   # ---------------------------
   type
@@ -809,13 +896,13 @@ when isMainModule:
     result = proc() =
       echo "SimpleTestRef with name = ", str1.name
 
-  proc testCase11() =
-    echo "\n\nTest Case 11"
+  proc testCase15() =
+    echo "\n\nTest Case 15"
     var ctr = ClosureTestRef.new()
     ctr.closureField = getTestClosureProc()
 
   # ---------------------------
-  # Use Case 12:
+  # Use Case 16:
   #   - Use of the "traceDestructor" template
   # ---------------------------
   type
@@ -828,8 +915,8 @@ when isMainModule:
     echo "##### Entered traceDestructor template for SimpleObjX"
     SimpleObjX.destroyFields(x.name)
 
-  proc testCase12() =
-    echo "\n\nTest Case 12"
+  proc testCase16() =
+    echo "\n\nTest Case 16"
     when defined(traceDestructors):
       echo "---- Compiled WITH '-d:traceDestructors' - there should be ",
         " a message indicating that the traceDestructor code was entered"
@@ -854,6 +941,10 @@ when isMainModule:
     testCase10()
     testCase11()
     testCase12()
+    testCase13()
+    testCase14()
+    testCase15()
+    testCase16()
 
 
   main()
